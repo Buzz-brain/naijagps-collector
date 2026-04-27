@@ -126,6 +126,7 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
           duration={gps.duration}
           currentPos={gps.currentPos}
           currentAccuracy={gps.currentAccuracy}
+          onExplain={explainDisabled}
         />
       </div>
 
@@ -143,7 +144,6 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
               gps.startRecording();
             }
           }}
-          onExplainDisabled={explainDisabled}
           onPause={gps.pauseRecording}
           onResume={gps.resumeRecording}
           onStop={gps.stopRecording}

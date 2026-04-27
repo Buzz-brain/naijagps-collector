@@ -1,4 +1,4 @@
-import { MapPin, Zap, Ruler, Clock, Navigation, Activity } from 'lucide-react';
+import { MapPin, Zap, Ruler, Clock, Navigation, Activity, Info } from 'lucide-react';
 import { formatDistance, formatSpeed, formatDuration } from '../lib/utils';
 
 interface Props {
@@ -35,27 +35,31 @@ function StatCard({
   );
 }
 
-export function Dashboard({ pointsCount, totalDistance, currentSpeed, duration, currentPos, currentAccuracy }: Props) {
+export function Dashboard({ pointsCount, totalDistance, currentSpeed, duration, currentPos, currentAccuracy, onExplain }: Props & { onExplain?: () => void }) {
   const renderBadge = () => {
     if (typeof currentAccuracy !== 'number') return null;
-    if (currentAccuracy > 50)
-      return (
-        <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-red-100 text-red-800 text-xs font-semibold px-3 py-1">
-          <span className="w-2 h-2 rounded-full bg-red-600" />
-          Poor GPS Signal
-        </div>
-      );
-    if (currentAccuracy > 20)
-      return (
-        <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1">
-          <span className="w-2 h-2 rounded-full bg-amber-600" />
-          Weak GPS
-        </div>
-      );
+    const isPoor = currentAccuracy > 50;
+    const isWeak = !isPoor && currentAccuracy > 20;
+    const label = isPoor ? 'Poor GPS Signal' : isWeak ? 'Weak GPS' : 'Good GPS';
+    const badgeClass = isPoor
+      ? 'inline-flex items-center gap-2 rounded-full bg-red-100 text-red-800 text-xs font-semibold px-3 py-1'
+      : isWeak
+      ? 'inline-flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1'
+      : 'inline-flex items-center gap-2 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1';
+    const dotClass = isPoor ? 'w-2 h-2 rounded-full bg-red-600' : isWeak ? 'w-2 h-2 rounded-full bg-amber-600' : 'w-2 h-2 rounded-full bg-emerald-600';
+
     return (
-      <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1">
-        <span className="w-2 h-2 rounded-full bg-emerald-600" />
-        Good GPS
+      <div className="mb-2 flex items-center justify-between">
+        <div className={badgeClass}>
+          <span className={dotClass} />
+          {label}
+        </div>
+        {onExplain && (
+          <button onClick={onExplain} className="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-1">
+            <Info size={14} />
+            Why?
+          </button>
+        )}
       </div>
     );
   };
