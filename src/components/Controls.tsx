@@ -13,7 +13,7 @@ interface Props {
   onOpenSessions?: () => void;
 }
 
-export function Controls({ status, onStart, onPause, onResume, onStop, onReset, startDisabled, onExplainDisabled }: Props) {
+export function Controls({ status, onStart, onPause, onResume, onStop, onReset, startDisabled, onExplainDisabled, onOpenSessions }: Props) {
   return (
     <div className="flex gap-3 items-center justify-center">
       {status === 'idle' && (
