@@ -4,6 +4,7 @@ import type { RecordingStatus } from '../hooks/useGPS';
 interface Props {
   status: RecordingStatus;
   onStart: () => void;
+  onAttemptStart?: () => void;
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
@@ -12,18 +13,23 @@ interface Props {
   onOpenSessions?: () => void;
 }
 
-export function Controls({ status, onStart, onPause, onResume, onStop, onReset, startDisabled, onOpenSessions }: Props) {
+export function Controls({ status, onStart, onAttemptStart, onPause, onResume, onStop, onReset, startDisabled, onOpenSessions }: Props) {
   return (
     <div className="flex gap-3 items-center justify-center">
       {status === 'idle' && (
         <div className="flex items-center gap-2">
           <button
-            onClick={onStart}
-            disabled={!!startDisabled}
-            title={startDisabled ? 'GPS accuracy too poor to start recording' : undefined}
+            onClick={() => {
+              if (startDisabled) {
+                onAttemptStart && onAttemptStart();
+              } else {
+                onStart();
+              }
+            }}
+            aria-disabled={!!startDisabled}
             className={`flex items-center gap-2 font-bold px-8 py-4 rounded-2xl transition-all duration-200 active:scale-95 text-base ${
               startDisabled
-                ? 'bg-slate-300 text-slate-600 cursor-not-allowed shadow-none'
+                ? 'bg-slate-300 text-slate-600 shadow-none'
                 : 'bg-emerald-500 hover:bg-emerald-400 text-white shadow-lg shadow-emerald-500/40'
             }`}
           >

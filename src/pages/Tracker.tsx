@@ -131,7 +131,7 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
       </div>
 
       {/* Controls */}
-      <div className="mx-3 mt-3 glass-card rounded-2xl p-4">
+      <div className="mx-3 mt-3 glass-card rounded-2xl p-4 relative">
         <Controls
           status={gps.status}
           onStart={() => {
@@ -144,14 +144,24 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
               gps.startRecording();
             }
           }}
+          onAttemptStart={() => explainDisabled()}
           onPause={gps.pauseRecording}
           onResume={gps.resumeRecording}
           onStop={gps.stopRecording}
           onReset={gps.resetRecording}
           startDisabled={gps.currentAccuracy == null || gps.currentAccuracy > 50}
-          onOpenSessions={() => setShowSessionsModal(true)}
         />
       </div>
+
+      {/* Sessions floating button (FAB) */}
+      <button
+        onClick={() => setShowSessionsModal(true)}
+        className="fixed right-4 bottom-6 z-50 flex items-center gap-2 px-4 py-3 rounded-full bg-emerald-500 hover:bg-emerald-400 text-white shadow-lg shadow-emerald-500/30"
+        aria-label="Open Sessions"
+      >
+        <PlusCircle size={18} />
+        <span className="hidden sm:inline-block text-sm font-semibold">Sessions</span>
+      </button>
 
       {/* Export Toggle */}
       {gps.points.length > 0 && (
@@ -249,6 +259,48 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
             </div>
 
             <div className="mt-4 space-y-3">
+              <div className="flex gap-2 mb-2">
+                <button
+                  onClick={() => {
+                    // export all
+                    const all = sessions.list();
+                    const rows = [] as any[];
+                    for (const ss of all) {
+                      for (const p of ss.points || []) {
+                        rows.push({ lat: p.lat, lon: p.lon, timestamp: p.timestamp, speed: p.speed, heading: p.heading, mode: ss.mode || p.mode || '', sessionName: ss.sessionName || '', accuracy: (p as any).accuracy ?? '' });
+                      }
+                    }
+                    const header = ['lat','lon','timestamp','speed','heading','mode','sessionName','accuracy'];
+                    const lines = [header.join(',')];
+                    for (const r of rows) lines.push([r.lat,r.lon,r.timestamp,r.speed,r.heading,r.mode,r.sessionName,r.accuracy].join(','));
+                    const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'all_sessions.csv';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  }}
+                  className="text-xs px-3 py-2 rounded-lg bg-indigo-500 text-white"
+                >
+                  Export All CSV
+                </button>
+                <button
+                  onClick={() => {
+                    const all = sessions.list();
+                    const out = all.map((s) => ({ sessionId: s.sessionId, sessionName: s.sessionName, createdAt: s.createdAt, points: (s.points||[]).map((p:any)=>({lat:p.lat,lon:p.lon,timestamp:p.timestamp,speed:p.speed,heading:p.heading})) }));
+                    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+                    const a = document.createElement('a');
+                    a.href = URL.createObjectURL(blob);
+                    a.download = 'all_sessions.json';
+                    a.click();
+                    URL.revokeObjectURL(a.href);
+                  }}
+                  className="text-xs px-3 py-2 rounded-lg bg-indigo-500 text-white"
+                >
+                  Export All JSON
+                </button>
+              </div>
+
               {sessionsList.map((s) => (
                 <div key={s.sessionId} className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-900">
                   <div>
@@ -301,9 +353,30 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
                     </button>
                     <button
                       onClick={() => {
-                        setSelectedSession(s.sessionId);
-                        gps.setSession(s.sessionId);
-                        setShowSessionsModal(false);
+                        // export this session CSV
+                        const rows = [] as any[];
+                        for (const p of s.points || []) rows.push([p.lat,p.lon,p.timestamp,p.speed,p.heading,s.mode||p.mode||'',s.sessionName||'',(p as any).accuracy||''].join(','));
+                        const blob = new Blob([[ 'lat,lon,timestamp,speed,heading,mode,sessionName,accuracy' ].concat(rows).join('\n')], { type: 'text/csv' });
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `${(s.sessionName||s.sessionId).toLowerCase().replace(/[^a-z0-9]+/g,'_')}.csv`;
+                        a.click();
+                        URL.revokeObjectURL(a.href);
+                      }}
+                      className="text-xs px-2 py-1 rounded bg-white/5"
+                    >
+                      CSV
+                    </button>
+                    <button
+                      onClick={() => {
+                        // export this session JSON
+                        const out = { sessionId: s.sessionId, sessionName: s.sessionName, createdAt: s.createdAt, points: (s.points||[]).map((p:any)=>({lat:p.lat,lon:p.lon,timestamp:p.timestamp,speed:p.speed,heading:p.heading})) };
+                        const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `${(s.sessionName||s.sessionId).toLowerCase().replace(/[^a-z0-9]+/g,'_')}.json`;
+                        a.click();
+                        URL.revokeObjectURL(a.href);
                       }}
                       className={`text-xs px-3 py-2 rounded-lg ${selectedSession === s.sessionId ? 'bg-emerald-500 text-white' : 'bg-white/5'}`}
                     >
