@@ -7,12 +7,15 @@ export type RecordingStatus = 'idle' | 'recording' | 'paused' | 'stopped';
 
 const MIN_DISTANCE_METERS = 5;
 const MIN_INTERVAL_MS = 1000;
+const MAX_ACCEPTABLE_ACCURACY = 20; // meters
+const MIN_SPEED_MPS = 0.5; // meters per second
 
 export function useGPS() {
   const [points, setPoints] = useState<GpsPoint[]>([]);
   const [status, setStatus] = useState<RecordingStatus>('idle');
   const [mode, setMode] = useState<MovementMode>('walking');
   const [currentPos, setCurrentPos] = useState<{ lat: number; lon: number } | null>(null);
+  const [currentAccuracy, setCurrentAccuracy] = useState<number | null>(null);
   const [currentSpeed, setCurrentSpeed] = useState(0);
   const [totalDistance, setTotalDistance] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -20,7 +23,10 @@ export function useGPS() {
   const [permissionGranted, setPermissionGranted] = useState(false);
 
   const watchIdRef = useRef<number | null>(null);
+  const accuracyIntervalRef = useRef<number | null>(null);
   const lastPointRef = useRef<GpsPoint | null>(null);
+  const smoothingBufferRef = useRef<Array<{ lat: number; lon: number }>>([]);
+  const lastAvgRef = useRef<{ lat: number; lon: number } | null>(null);
   const lastSaveTimeRef = useRef<number>(0);
   const sessionIdRef = useRef<string>(generateSessionId());
   const startedAtRef = useRef<string>('');
@@ -30,6 +36,10 @@ export function useGPS() {
   const pointsRef = useRef<GpsPoint[]>([]);
 
   const { savePoints, clearPoints } = useStorage();
+  // allow external session control
+  const setSession = useCallback((sessionId: string) => {
+    sessionIdRef.current = sessionId;
+  }, []);
 
   // keep pointsRef in sync for callbacks
   useEffect(() => {
@@ -53,40 +63,67 @@ export function useGPS() {
   const handlePosition = useCallback(
     (pos: GeolocationPosition) => {
       const { latitude, longitude, speed, accuracy } = pos.coords;
+      setCurrentAccuracy(accuracy);
       setCurrentPos({ lat: latitude, lon: longitude });
 
-      if (accuracy > 50) return; // skip low-accuracy fixes
+      // Ignore low-accuracy fixes entirely but keep accuracy state for warning
+      if (accuracy > MAX_ACCEPTABLE_ACCURACY) return;
 
       const now = Date.now();
       const timeDiff = now - lastSaveTimeRef.current;
       const last = lastPointRef.current;
 
+      // Add this raw point to smoothing buffer
+      const buf = smoothingBufferRef.current;
+      buf.push({ lat: latitude, lon: longitude });
+      if (buf.length > 3) buf.shift();
+
+      // compute averaged (smoothed) position from last up to 3 points
+      const avg = buf.reduce(
+        (acc, p) => ({ lat: acc.lat + p.lat, lon: acc.lon + p.lon }),
+        { lat: 0, lon: 0 }
+      );
+      const avgCount = buf.length || 1;
+      const avgLat = avg.lat / avgCount;
+      const avgLon = avg.lon / avgCount;
+
+      // distance & heading computed from last averaged position
       let distFromLast = 0;
       let heading = 0;
-      if (last) {
-        distFromLast = haversineDistance(last.lat, last.lon, latitude, longitude);
-        heading = calculateHeading(last.lat, last.lon, latitude, longitude);
+      const lastAvg = lastAvgRef.current;
+      if (lastAvg) {
+        distFromLast = haversineDistance(lastAvg.lat, lastAvg.lon, avgLat, avgLon);
+        heading = calculateHeading(lastAvg.lat, lastAvg.lon, avgLat, avgLon);
       }
 
-      const shouldSave = timeDiff >= MIN_INTERVAL_MS || (last && distFromLast >= MIN_DISTANCE_METERS);
+      const shouldSave =
+        !lastAvg ||
+        distFromLast >= MIN_DISTANCE_METERS ||
+        (timeDiff >= MIN_INTERVAL_MS && (speed != null ? speed : distFromLast / (timeDiff / 1000)) > MIN_SPEED_MPS);
+
       if (!shouldSave) return;
 
-      const mps = speed != null && speed >= 0 ? speed : (last && timeDiff > 0 ? distFromLast / (timeDiff / 1000) : 0);
-      setCurrentSpeed(mps);
+      const mps = speed != null && speed >= 0 ? speed : lastAvg && timeDiff > 0 ? distFromLast / (timeDiff / 1000) : 0;
+
+      // Movement status: moving if speed > MIN_SPEED_MPS
+      const moving = mps > MIN_SPEED_MPS;
+      setCurrentSpeed(moving ? mps : 0);
 
       const point: GpsPoint = {
-        lat: parseFloat(latitude.toFixed(7)),
-        lon: parseFloat(longitude.toFixed(7)),
+        lat: parseFloat(avgLat.toFixed(7)),
+        lon: parseFloat(avgLon.toFixed(7)),
         timestamp: new Date().toISOString(),
-        speed: parseFloat(mps.toFixed(2)),
+        speed: parseFloat((moving ? mps : 0).toFixed(2)),
         heading: parseFloat(heading.toFixed(1)),
         mode,
       };
 
       lastPointRef.current = point;
+      lastAvgRef.current = { lat: avgLat, lon: avgLon };
       lastSaveTimeRef.current = now;
 
-      if (last) {
+      // Only accumulate distance for real movement (distance >= MIN_DISTANCE_METERS AND moving)
+      if (lastAvg && distFromLast >= MIN_DISTANCE_METERS && moving) {
         accDistRef.current += distFromLast;
         setTotalDistance(accDistRef.current);
       }
@@ -100,17 +137,31 @@ export function useGPS() {
     [mode, savePoints]
   );
 
-  const requestPermission = useCallback(async () => {
+  const requestPermission = useCallback(async (): Promise<number | null> => {
     setError(null);
     try {
-      await new Promise<void>((resolve, reject) => {
+      const accuracy = await new Promise<number>((resolve, reject) => {
         navigator.geolocation.getCurrentPosition(
-          () => resolve(),
+          (p) => resolve(p.coords.accuracy),
           (err) => reject(err),
           { enableHighAccuracy: true, timeout: 10000 }
         );
       });
       setPermissionGranted(true);
+      setCurrentAccuracy(accuracy);
+      // start polling accuracy every second
+      if (accuracyIntervalRef.current) window.clearInterval(accuracyIntervalRef.current);
+      accuracyIntervalRef.current = window.setInterval(() => {
+        navigator.geolocation.getCurrentPosition(
+          (p) => {
+            setCurrentAccuracy(p.coords.accuracy);
+            setCurrentPos({ lat: p.coords.latitude, lon: p.coords.longitude });
+          },
+          () => {},
+          { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+        );
+      }, 1000);
+      return accuracy;
     } catch (err) {
       const geoError = err as GeolocationPositionError;
       if (geoError.code === 1) {
@@ -118,18 +169,27 @@ export function useGPS() {
       } else {
         setError('Unable to get location. Ensure GPS is enabled.');
       }
+      return null;
     }
   }, []);
 
-  const startRecording = useCallback(() => {
+  const startRecording = useCallback((force = false) => {
     if (!navigator.geolocation) {
       setError('Geolocation is not supported by your browser.');
       return;
     }
+    // only allow starting when accuracy is acceptable (<= 50m) unless forced
+    if (!force && currentAccuracy != null && currentAccuracy > 50) {
+      setError('Cannot start recording: poor GPS accuracy. Move outside or enable precise location.');
+      return;
+    }
+
     sessionIdRef.current = generateSessionId();
     startedAtRef.current = new Date().toISOString();
     startTimeRef.current = Date.now();
     lastPointRef.current = null;
+    smoothingBufferRef.current = [];
+    lastAvgRef.current = null;
     lastSaveTimeRef.current = 0;
     accDistRef.current = 0;
     setPoints([]);
@@ -192,6 +252,8 @@ export function useGPS() {
     setDuration(0);
     setCurrentSpeed(0);
     setCurrentPos(null);
+    smoothingBufferRef.current = [];
+    lastAvgRef.current = null;
     accDistRef.current = 0;
     setStatus('idle');
   }, [stopRecording, clearPoints]);
@@ -200,6 +262,7 @@ export function useGPS() {
     return () => {
       if (watchIdRef.current !== null) navigator.geolocation.clearWatch(watchIdRef.current);
       stopTimer();
+      if (accuracyIntervalRef.current) window.clearInterval(accuracyIntervalRef.current);
     };
   }, [stopTimer]);
 
@@ -215,6 +278,7 @@ export function useGPS() {
     error,
     permissionGranted,
     sessionId: sessionIdRef.current,
+    setSession,
     startedAt: startedAtRef.current,
     requestPermission,
     startRecording,
@@ -222,5 +286,6 @@ export function useGPS() {
     resumeRecording,
     stopRecording,
     resetRecording,
+    currentAccuracy,
   };
 }

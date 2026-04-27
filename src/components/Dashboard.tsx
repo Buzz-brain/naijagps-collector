@@ -7,6 +7,7 @@ interface Props {
   currentSpeed: number;
   duration: number;
   currentPos: { lat: number; lon: number } | null;
+  currentAccuracy?: number | null;
 }
 
 function StatCard({
@@ -34,9 +35,39 @@ function StatCard({
   );
 }
 
-export function Dashboard({ pointsCount, totalDistance, currentSpeed, duration, currentPos }: Props) {
+export function Dashboard({ pointsCount, totalDistance, currentSpeed, duration, currentPos, currentAccuracy }: Props) {
+  const renderBadge = () => {
+    if (typeof currentAccuracy !== 'number') return null;
+    if (currentAccuracy > 50)
+      return (
+        <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-red-100 text-red-800 text-xs font-semibold px-3 py-1">
+          <span className="w-2 h-2 rounded-full bg-red-600" />
+          Poor GPS Signal
+        </div>
+      );
+    if (currentAccuracy > 20)
+      return (
+        <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-amber-100 text-amber-800 text-xs font-semibold px-3 py-1">
+          <span className="w-2 h-2 rounded-full bg-amber-600" />
+          Weak GPS
+        </div>
+      );
+    return (
+      <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-emerald-100 text-emerald-800 text-xs font-semibold px-3 py-1">
+        <span className="w-2 h-2 rounded-full bg-emerald-600" />
+        Good GPS
+      </div>
+    );
+  };
+
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+    <div>
+      {renderBadge()}
+      {typeof currentAccuracy === 'number' && currentAccuracy > 20 && (
+        <div className="mb-2 text-xs text-slate-600 dark:text-slate-400">Go outside or enable precise location for better accuracy</div>
+      )}
+
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
       <StatCard
         icon={<Activity size={13} />}
         label="Points"
@@ -74,6 +105,7 @@ export function Dashboard({ pointsCount, totalDistance, currentSpeed, duration, 
         value={currentPos ? currentPos.lon.toFixed(6) : '—'}
         accent="text-teal-500"
       />
+      </div>
     </div>
   );
 }

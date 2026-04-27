@@ -8,21 +8,40 @@ interface Props {
   onResume: () => void;
   onStop: () => void;
   onReset: () => void;
+  startDisabled?: boolean;
+  onExplainDisabled?: () => void;
+  onOpenSessions?: () => void;
 }
 
-export function Controls({ status, onStart, onPause, onResume, onStop, onReset }: Props) {
+export function Controls({ status, onStart, onPause, onResume, onStop, onReset, startDisabled, onExplainDisabled }: Props) {
   return (
     <div className="flex gap-3 items-center justify-center">
       {status === 'idle' && (
-        <button
-          onClick={onStart}
-          className="flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-bold
-            px-8 py-4 rounded-2xl shadow-lg shadow-emerald-500/40 transition-all duration-200
-            active:scale-95 text-base"
-        >
-          <Play size={20} fill="white" />
-          Start Recording
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onStart}
+            disabled={!!startDisabled}
+            title={startDisabled ? 'GPS accuracy too poor to start recording' : undefined}
+            className={`flex items-center gap-2 font-bold px-8 py-4 rounded-2xl transition-all duration-200 active:scale-95 text-base ${
+              startDisabled
+                ? 'bg-slate-300 text-slate-600 cursor-not-allowed shadow-none'
+                : 'bg-emerald-500 hover:bg-emerald-400 text-white shadow-lg shadow-emerald-500/40'
+            }`}
+          >
+            <Play size={20} fill="white" />
+            Start Recording
+          </button>
+
+          {startDisabled && onExplainDisabled && (
+            <button
+              onClick={onExplainDisabled}
+              className="text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-slate-700 dark:text-slate-300 border border-white/10"
+              title="Why can't I start?"
+            >
+              Why?
+            </button>
+          )}
+        </div>
       )}
 
       {status === 'recording' && (
@@ -75,6 +94,15 @@ export function Controls({ status, onStart, onPause, onResume, onStop, onReset }
         >
           <RotateCcw size={18} />
           New Session
+        </button>
+      )}
+
+      {onOpenSessions && (
+        <button
+          onClick={onOpenSessions}
+          className="absolute right-4 bottom-4 text-xs px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 text-slate-700 dark:text-slate-300 border border-white/10"
+        >
+          Sessions
         </button>
       )}
     </div>
