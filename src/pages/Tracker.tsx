@@ -194,8 +194,8 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
       <div className="mx-3 mt-2 glass-card rounded-2xl overflow-hidden flex-1 relative" style={{ minHeight: 260 }}>
         <MapView points={gps.points} currentPos={gps.currentPos} />
         {countdownActive && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="bg-black/60 text-white rounded-2xl px-6 py-4 text-center">
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none" style={{ zIndex: 9999 }}>
+            <div className="bg-black/60 text-white rounded-2xl px-6 py-4 text-center pointer-events-auto">
               <div className="text-5xl font-bold tabular-nums">{countdown}</div>
               <div className="text-sm mt-1">Recording starts in</div>
             </div>
