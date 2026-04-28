@@ -9,7 +9,7 @@ import { ExportPanel } from '../components/ExportPanel';
 import { useGPS } from '../hooks/useGPS';
 import type { MovementMode } from '../lib/utils';
 import { X, RefreshCw, Info, PlusCircle, Trash2, Edit3 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useSessions } from '../hooks/useSessions';
 import { UPLOAD_URL } from '../lib/supabase';
 
@@ -30,6 +30,9 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
   const [sessionsList, setSessionsList] = useState<any[]>([]);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [countdown, setCountdown] = useState<number>(10);
+  const [countdownActive, setCountdownActive] = useState(false);
+  const countdownRef = useRef<number | null>(null);
 
   const sessions = useSessions();
 
@@ -82,6 +85,50 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
       showToast('error', `Failed to save: ${String(err)}`);
     }
   };
+
+  const cancelCountdown = () => {
+    if (countdownRef.current) {
+      clearInterval(countdownRef.current as number);
+      countdownRef.current = null;
+    }
+    setCountdownActive(false);
+    setCountdown(10);
+  };
+
+  const startRecordingWithCountdown = async (force = false) => {
+    // request permission first
+    const acc = await gps.requestPermission();
+    if (!force && acc != null && acc > 50) {
+      explainDisabled();
+      return;
+    }
+    setCountdown(10);
+    setCountdownActive(true);
+
+    countdownRef.current = window.setInterval(() => {
+      setCountdown((c) => {
+        if (c <= 1) {
+          if (countdownRef.current) {
+            clearInterval(countdownRef.current as number);
+            countdownRef.current = null;
+          }
+          setCountdownActive(false);
+          gps.startRecording();
+          return 0;
+        }
+        return c - 1;
+      });
+    }, 1000);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (countdownRef.current) {
+        clearInterval(countdownRef.current as number);
+        countdownRef.current = null;
+      }
+    };
+  }, []);
 
   return (
     <div className="min-h-screen flex flex-col max-w-lg mx-auto">
@@ -144,8 +191,16 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
       </div>
 
       {/* Map */}
-      <div className="mx-3 mt-2 glass-card rounded-2xl overflow-hidden flex-1" style={{ minHeight: 260 }}>
+      <div className="mx-3 mt-2 glass-card rounded-2xl overflow-hidden flex-1 relative" style={{ minHeight: 260 }}>
         <MapView points={gps.points} currentPos={gps.currentPos} />
+        {countdownActive && (
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+            <div className="bg-black/60 text-white rounded-2xl px-6 py-4 text-center">
+              <div className="text-5xl font-bold tabular-nums">{countdown}</div>
+              <div className="text-sm mt-1">Recording starts in</div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Dashboard */}
@@ -172,28 +227,19 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
         <Controls
           status={gps.status}
           onStart={() => {
-            if (!gps.permissionGranted) {
-              gps.requestPermission().then((acc) => {
-                if (acc != null && acc <= 50) gps.startRecording();
-                else explainDisabled();
-              });
-            } else {
-              gps.startRecording();
-            }
+            // start with countdown (respecting accuracy)
+            startRecordingWithCountdown(false);
           }}
           onAttemptStart={() => explainDisabled()}
           onRecordAnyway={() => {
-            if (!gps.permissionGranted) {
-              gps.requestPermission().then(() => {
-                gps.startRecording();
-              });
-            } else {
-              gps.startRecording();
-            }
+            // force start with countdown ignoring accuracy
+            startRecordingWithCountdown(true);
           }}
           onPause={gps.pauseRecording}
           onResume={gps.resumeRecording}
           onStop={() => {
+            // cancel any pending countdown
+            cancelCountdown();
             // If no session selected and we have points, prompt for session name
             if (!selectedSession && gps.points.length > 0) {
               const sessionName = prompt('Create a session name for this reading:', `Session ${new Date().toISOString().slice(0, 19)}`);
