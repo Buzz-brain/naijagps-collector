@@ -5,7 +5,7 @@ import { useStorage } from './useStorage';
 
 export type RecordingStatus = 'idle' | 'recording' | 'paused' | 'stopped';
 
-const MIN_DISTANCE_METERS = 5;
+const MIN_DISTANCE_METERS = 10;
 const MIN_INTERVAL_MS = 1000;
 const MAX_ACCEPTABLE_ACCURACY = 20; // meters
 const MIN_SPEED_MPS = 0.5; // meters per second
