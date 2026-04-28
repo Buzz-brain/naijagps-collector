@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, ArrowLeft, Lock } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Lock, CheckCircle, XCircle } from 'lucide-react';
 import { Header } from '../components/Header';
 import { ModeSelector } from '../components/ModeSelector';
 import { Controls } from '../components/Controls';
@@ -11,6 +11,7 @@ import type { MovementMode } from '../lib/utils';
 import { X, RefreshCw, Info, PlusCircle, Trash2, Edit3 } from 'lucide-react';
 import { useEffect } from 'react';
 import { useSessions } from '../hooks/useSessions';
+import { UPLOAD_URL } from '../lib/supabase';
 
 interface Props {
   isDark: boolean;
@@ -28,6 +29,7 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
   const [showSessionsModal, setShowSessionsModal] = useState(false);
   const [sessionsList, setSessionsList] = useState<any[]>([]);
   const [selectedSession, setSelectedSession] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   const sessions = useSessions();
 
@@ -50,6 +52,35 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
       'Cannot start recording because GPS accuracy is poor. Go outside or enable precise/high-accuracy location in your device settings.'
     );
     setShowAccuracyModal(true);
+  };
+
+  const showToast = (type: 'success' | 'error', message: string) => {
+    setToast({ type, message });
+    setTimeout(() => setToast(null), 4000);
+  };
+
+  const handleUploadToDb = async (sessionId: string, points: any[]) => {
+    if (points.length === 0) return;
+    try {
+      const res = await fetch(UPLOAD_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          mode: gps.mode,
+          points,
+          total_distance: gps.totalDistance,
+          duration_seconds: gps.duration,
+          started_at: gps.startedAt,
+          completed_at: new Date().toISOString(),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? 'Upload failed');
+      showToast('success', `${data.points_count} points saved to database!`);
+    } catch (err) {
+      showToast('error', `Failed to save: ${String(err)}`);
+    }
   };
 
   return (
@@ -132,6 +163,12 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
 
       {/* Controls */}
       <div className="mx-3 mt-3 glass-card rounded-2xl p-4 relative">
+        {/* Current session display */}
+        {selectedSession && (
+          <div className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 mb-3">
+            Recording to: <span className="text-emerald-500 dark:text-emerald-300">{sessionsList.find(s => s.sessionId === selectedSession)?.sessionName || 'Untitled Session'}</span>
+          </div>
+        )}
         <Controls
           status={gps.status}
           onStart={() => {
@@ -145,9 +182,37 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
             }
           }}
           onAttemptStart={() => explainDisabled()}
+          onRecordAnyway={() => {
+            if (!gps.permissionGranted) {
+              gps.requestPermission().then(() => {
+                gps.startRecording();
+              });
+            } else {
+              gps.startRecording();
+            }
+          }}
           onPause={gps.pauseRecording}
           onResume={gps.resumeRecording}
-          onStop={gps.stopRecording}
+          onStop={() => {
+            // If no session selected and we have points, prompt for session name
+            if (!selectedSession && gps.points.length > 0) {
+              const sessionName = prompt('Create a session name for this reading:', `Session ${new Date().toISOString().slice(0, 19)}`);
+              if (sessionName) {
+                const newSession = sessions.create(sessionName, gps.mode);
+                setSelectedSession(newSession.sessionId);
+                gps.setSession(newSession.sessionId);
+                setSessionsList(sessions.list());
+                // Save the current points to this new session
+                gps.savePointsToSession(newSession.sessionId);
+                // Upload to database
+                handleUploadToDb(newSession.sessionId, gps.points);
+              }
+            } else if (selectedSession && gps.points.length > 0) {
+              // Upload to database if session is selected
+              handleUploadToDb(selectedSession, gps.points);
+            }
+            gps.stopRecording();
+          }}
           onReset={gps.resetRecording}
           startDisabled={gps.currentAccuracy == null || gps.currentAccuracy > 50}
         />
@@ -369,14 +434,10 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
                     </button>
                     <button
                       onClick={() => {
-                        // export this session JSON
-                        const out = { sessionId: s.sessionId, sessionName: s.sessionName, createdAt: s.createdAt, points: (s.points||[]).map((p:any)=>({lat:p.lat,lon:p.lon,timestamp:p.timestamp,speed:p.speed,heading:p.heading})) };
-                        const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
-                        const a = document.createElement('a');
-                        a.href = URL.createObjectURL(blob);
-                        a.download = `${(s.sessionName||s.sessionId).toLowerCase().replace(/[^a-z0-9]+/g,'_')}.json`;
-                        a.click();
-                        URL.revokeObjectURL(a.href);
+                        // select this session for recording
+                        setSelectedSession(s.sessionId);
+                        gps.setSession(s.sessionId);
+                        setShowSessionsModal(false);
                       }}
                       className={`text-xs px-3 py-2 rounded-lg ${selectedSession === s.sessionId ? 'bg-emerald-500 text-white' : 'bg-white/5'}`}
                     >
@@ -387,6 +448,22 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
               ))}
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-6 left-4 right-4 max-w-sm mx-auto z-40 flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-300 ${
+          toast.type === 'success'
+            ? 'bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800'
+            : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 border border-red-200 dark:border-red-800'
+        }`}>
+          {toast.type === 'success' ? (
+            <CheckCircle size={18} className="flex-shrink-0" />
+          ) : (
+            <XCircle size={18} className="flex-shrink-0" />
+          )}
+          <span className="text-sm font-medium">{toast.message}</span>
         </div>
       )}
     </div>

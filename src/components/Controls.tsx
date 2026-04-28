@@ -5,6 +5,7 @@ interface Props {
   status: RecordingStatus;
   onStart: () => void;
   onAttemptStart?: () => void;
+  onRecordAnyway?: () => void;
   onPause: () => void;
   onResume: () => void;
   onStop: () => void;
@@ -13,7 +14,7 @@ interface Props {
   onOpenSessions?: () => void;
 }
 
-export function Controls({ status, onStart, onAttemptStart, onPause, onResume, onStop, onReset, startDisabled, onOpenSessions }: Props) {
+export function Controls({ status, onStart, onAttemptStart, onRecordAnyway, onPause, onResume, onStop, onReset, startDisabled, onOpenSessions }: Props) {
   return (
     <div className="flex gap-3 items-center justify-center">
       {status === 'idle' && (
@@ -36,6 +37,16 @@ export function Controls({ status, onStart, onAttemptStart, onPause, onResume, o
             <Play size={20} fill="white" />
             Start Recording
           </button>
+
+          {startDisabled && onRecordAnyway && (
+            <button
+              onClick={onRecordAnyway}
+              className="flex items-center gap-2 font-bold px-6 py-4 rounded-2xl transition-all duration-200 active:scale-95 text-base
+                bg-orange-500 hover:bg-orange-400 text-white shadow-lg shadow-orange-500/40"
+            >
+              Record Anyway
+            </button>
+          )}
 
           {/* Start helper moved to Dashboard */}
         </div>

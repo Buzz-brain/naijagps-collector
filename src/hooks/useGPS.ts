@@ -35,7 +35,7 @@ export function useGPS() {
   const accDistRef = useRef<number>(0);
   const pointsRef = useRef<GpsPoint[]>([]);
 
-  const { savePoints, clearPoints } = useStorage();
+  const { savePoints, clearAll } = useStorage();
   // allow external session control
   const setSession = useCallback((sessionId: string) => {
     sessionIdRef.current = sessionId;
@@ -246,7 +246,7 @@ export function useGPS() {
 
   const resetRecording = useCallback(() => {
     stopRecording();
-    clearPoints();
+    clearAll();
     setPoints([]);
     setTotalDistance(0);
     setDuration(0);
@@ -256,7 +256,11 @@ export function useGPS() {
     lastAvgRef.current = null;
     accDistRef.current = 0;
     setStatus('idle');
-  }, [stopRecording, clearPoints]);
+  }, [stopRecording, clearAll]);
+
+  const savePointsToSession = useCallback((targetSessionId: string) => {
+    savePoints(pointsRef.current, targetSessionId, mode, startedAtRef.current);
+  }, [savePoints, mode]);
 
   useEffect(() => {
     return () => {
@@ -286,6 +290,7 @@ export function useGPS() {
     resumeRecording,
     stopRecording,
     resetRecording,
+    savePointsToSession,
     currentAccuracy,
   };
 }
