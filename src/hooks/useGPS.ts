@@ -113,7 +113,7 @@ export function useGPS() {
       const mps = computedSpeed;
 
       // Movement status: moving if speed > MIN_SPEED_MPS or if the step distance indicates movement
-      const moving = mps > MIN_SPEED_MPS || distFromLast > SMALL_STEP_THRESHOLD;
+      const moving = mps > MIN_SPEED_MPS || distFromLast >= SMALL_STEP_THRESHOLD;
       setCurrentSpeed(moving ? mps : 0);
 
       const point: GpsPoint = {
