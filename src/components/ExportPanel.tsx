@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { Download, Trash2, Upload, CheckCircle, XCircle, Loader } from 'lucide-react';
 import type { GpsPoint } from '../lib/utils';
+import { haversineDistance } from '../lib/utils';
 import { UPLOAD_URL } from '../lib/supabase';
 import { useStorage } from '../hooks/useStorage';
 
 interface Props {
   points: GpsPoint[];
   sessionId: string;
+  sessionName?: string;
   mode: string;
   totalDistance: number;
   duration: number;
@@ -17,17 +19,50 @@ interface Props {
 
 type UploadState = 'idle' | 'uploading' | 'success' | 'error';
 
-export function ExportPanel({ points, sessionId, mode, totalDistance, duration, startedAt, onClear, disabled }: Props) {
+export function ExportPanel({ points, sessionId, sessionName, mode, totalDistance, duration, startedAt, onClear, disabled }: Props) {
   const [uploadState, setUploadState] = useState<UploadState>('idle');
   const [uploadMsg, setUploadMsg] = useState('');
   const { loadSession, loadAll } = useStorage();
 
+  const computeMetadata = () => {
+    const pointsToUse = points && points.length > 0 ? points : [];
+    const maxSpeed = pointsToUse.length > 0 ? Math.max(...pointsToUse.map((p: any) => p.speed || 0)) : 0;
+    const avgSpeed = duration > 0 ? (totalDistance / 1000) / (duration / 3600) : 0;
+    const startLat = pointsToUse.length > 0 ? pointsToUse[0].lat : null;
+    const startLon = pointsToUse.length > 0 ? pointsToUse[0].lon : null;
+    const endLat = pointsToUse.length > 0 ? pointsToUse[pointsToUse.length - 1].lat : null;
+    const endLon = pointsToUse.length > 0 ? pointsToUse[pointsToUse.length - 1].lon : null;
+    
+    return {
+      session: {
+        id: sessionId,
+        name: sessionName || `session_${sessionId}`,
+        startedAt: startedAt,
+        stoppedAt: new Date().toISOString(),
+        mode: mode,
+        totalPoints: pointsToUse.length,
+        totalDistance: totalDistance,
+        totalDistanceUnit: 'meters',
+        duration: duration,
+        durationUnit: 'seconds',
+        avgSpeed: parseFloat(avgSpeed.toFixed(2)),
+        avgSpeedUnit: 'km/h',
+        maxSpeed: parseFloat(maxSpeed.toFixed(2)),
+        maxSpeedUnit: 'km/h',
+        startLat: startLat,
+        startLon: startLon,
+        endLat: endLat,
+        endLon: endLon,
+        exportedAt: new Date().toISOString(),
+      },
+      points: pointsToUse.map((p: any) => ({ lat: p.lat, lon: p.lon, timestamp: p.timestamp, speed: p.speed, heading: p.heading, mode: p.mode || mode }))
+    };
+  };
+
   const handleExport = () => {
-    const session = loadSession(sessionId) ?? { points };
-    // export only required fields
-    const out = (session.points || points).map((p: any) => ({ lat: p.lat, lon: p.lon, timestamp: p.timestamp, speed: p.speed, heading: p.heading }));
-    const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
-    const name = (session.sessionName || `session_${sessionId}`).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const metadata = computeMetadata();
+    const name = (sessionName || `session_${sessionId}`).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const blob = new Blob([JSON.stringify(metadata, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -56,13 +91,14 @@ export function ExportPanel({ points, sessionId, mode, totalDistance, duration, 
   };
 
   const handleExportCsv = () => {
-    const session = loadSession(sessionId) ?? { points };
-    const rows = (session.points || points).map((p: any) => ({
-      lat: p.lat, lon: p.lon, timestamp: p.timestamp, speed: p.speed, heading: p.heading, mode: session.mode || p.mode || '', sessionName: session.sessionName || '', accuracy: p.accuracy ?? ''
+    const metadata = computeMetadata();
+    const name = (sessionName || `session_${sessionId}`).toLowerCase().replace(/[^a-z0-9]+/g, '_');
+    const rows = (points || []).map((p: any) => ({
+      lat: p.lat, lon: p.lon, timestamp: p.timestamp, speed: p.speed, heading: p.heading, mode: mode, sessionName: sessionName || '', accuracy: (p as any).accuracy ?? ''
     }));
     const csv = toCsvRows(rows);
-    const name = (session.sessionName || `session_${sessionId}`).toLowerCase().replace(/[^a-z0-9]+/g, '_');
-    const blob = new Blob([csv], { type: 'text/csv' });
+    const header = `# Session Export\n# ID: ${metadata.session.id}\n# Name: ${metadata.session.name}\n# Started: ${metadata.session.startedAt}\n# Stopped: ${metadata.session.stoppedAt}\n# Total Points: ${metadata.session.totalPoints}\n# Total Distance: ${metadata.session.totalDistance} m\n# Duration: ${metadata.session.duration} s\n# Avg Speed: ${metadata.session.avgSpeed} km/h\n# Max Speed: ${metadata.session.maxSpeed} km/h\n# Start: ${metadata.session.startLat},${metadata.session.startLon}\n# End: ${metadata.session.endLat},${metadata.session.endLon}\n# Exported: ${metadata.session.exportedAt}\n\n${csv}`;
+    const blob = new Blob([header], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

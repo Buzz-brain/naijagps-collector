@@ -8,9 +8,11 @@ import { MapView } from '../components/MapView';
 import { ExportPanel } from '../components/ExportPanel';
 import { useGPS } from '../hooks/useGPS';
 import type { MovementMode } from '../lib/utils';
+import { haversineDistance } from '../lib/utils';
 import { X, RefreshCw, Info, PlusCircle, Trash2, Edit3 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { useSessions } from '../hooks/useSessions';
+import { useStorage } from '../hooks/useStorage';
 import { UPLOAD_URL } from '../lib/supabase';
 
 interface Props {
@@ -35,6 +37,7 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
   const countdownRef = useRef<number | null>(null);
 
   const sessions = useSessions();
+  const storage = useStorage();
 
   useEffect(() => {
     const list = sessions.list();
@@ -258,6 +261,16 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
               handleUploadToDb(selectedSession, gps.points);
             }
             gps.stopRecording();
+            // Save stoppedAt timestamp to session
+            if (selectedSession) {
+              const session = storage.loadSession(selectedSession);
+              if (session) {
+                session.stoppedAt = new Date().toISOString();
+                const allSessions = storage.loadAll();
+                const updated = allSessions.map(s => s.sessionId === selectedSession ? session : s);
+                storage.writeAll(updated);
+              }
+            }
           }}
           onReset={gps.resetRecording}
           startDisabled={gps.currentAccuracy == null || gps.currentAccuracy > 50}
@@ -289,6 +302,7 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
               <ExportPanel
                 points={gps.points}
                 sessionId={gps.sessionId}
+                sessionName={sessionsList.find((s) => s.sessionId === selectedSession)?.sessionName}
                 mode={gps.mode}
                 totalDistance={gps.totalDistance}
                 duration={gps.duration}
@@ -373,17 +387,39 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
               <div className="flex gap-2 mb-2">
                 <button
                   onClick={() => {
-                    // export all
                     const all = sessions.list();
-                    const rows = [] as any[];
-                    for (const ss of all) {
-                      for (const p of ss.points || []) {
-                        rows.push({ lat: p.lat, lon: p.lon, timestamp: p.timestamp, speed: p.speed, heading: p.heading, mode: ss.mode || p.mode || '', sessionName: ss.sessionName || '', accuracy: (p as any).accuracy ?? '' });
-                      }
-                    }
+                    const lines: string[] = ['# All Sessions Export', `# Exported: ${new Date().toISOString()}`, `# Total Sessions: ${all.length}`, ''];
                     const header = ['lat','lon','timestamp','speed','heading','mode','sessionName','accuracy'];
-                    const lines = [header.join(',')];
-                    for (const r of rows) lines.push([r.lat,r.lon,r.timestamp,r.speed,r.heading,r.mode,r.sessionName,r.accuracy].join(','));
+                    lines.push(header.join(','));
+                    
+                    for (const ss of all) {
+                      const pts = ss.points || [];
+                      const maxSpeed = pts.length > 0 ? Math.max(...pts.map((p: any) => p.speed || 0)) : 0;
+                      const totalDist = pts.length > 1 ? pts.reduce((sum: number, p: any, i: number) => i === 0 ? 0 : sum + (haversineDistance(pts[i-1].lat, pts[i-1].lon, p.lat, p.lon) || 0), 0) : 0;
+                      const duration = ss.startedAt && pts.length > 1 ? Math.round((new Date(pts[pts.length - 1].timestamp).getTime() - new Date(pts[0].timestamp).getTime()) / 1000) : 0;
+                      const avgSpeed = duration > 0 ? ((totalDist / 1000) / (duration / 3600)) : 0;
+                      const startLat = pts.length > 0 ? pts[0].lat : null;
+                      const startLon = pts.length > 0 ? pts[0].lon : null;
+                      const endLat = pts.length > 0 ? pts[pts.length - 1].lat : null;
+                      const endLon = pts.length > 0 ? pts[pts.length - 1].lon : null;
+                      
+                      lines.push(`# --- Session: ${ss.sessionName || 'Untitled'} ---`);
+                      lines.push(`# ID: ${ss.sessionId}`);
+                      lines.push(`# Started: ${ss.startedAt || ss.createdAt}`);
+                      lines.push(`# Points: ${pts.length}`);
+                      lines.push(`# Distance: ${totalDist.toFixed(2)} m`);
+                      lines.push(`# Duration: ${duration} s`);
+                      lines.push(`# Avg Speed: ${avgSpeed.toFixed(2)} km/h`);
+                      lines.push(`# Max Speed: ${maxSpeed.toFixed(2)} km/h`);
+                      lines.push(`# Start: ${startLat},${startLon}`);
+                      lines.push(`# End: ${endLat},${endLon}`);
+                      
+                      for (const p of pts) {
+                        lines.push([p.lat, p.lon, p.timestamp, p.speed, p.heading, ss.mode || p.mode || '', ss.sessionName || '', (p as any).accuracy ?? ''].join(','));
+                      }
+                      lines.push('');
+                    }
+                    
                     const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
                     const a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
@@ -398,7 +434,43 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
                 <button
                   onClick={() => {
                     const all = sessions.list();
-                    const out = all.map((s) => ({ sessionId: s.sessionId, sessionName: s.sessionName, createdAt: s.createdAt, points: (s.points||[]).map((p:any)=>({lat:p.lat,lon:p.lon,timestamp:p.timestamp,speed:p.speed,heading:p.heading})) }));
+                    const out = all.map((s) => {
+                      const pts = s.points || [];
+                      const maxSpeed = pts.length > 0 ? Math.max(...pts.map((p: any) => p.speed || 0)) : 0;
+                      const totalDist = pts.length > 1 ? pts.reduce((sum: number, p: any, i: number) => i === 0 ? 0 : sum + (haversineDistance(pts[i-1].lat, pts[i-1].lon, p.lat, p.lon) || 0), 0) : 0;
+                      const duration = s.startedAt && pts.length > 1 ? Math.round((new Date(pts[pts.length - 1].timestamp).getTime() - new Date(pts[0].timestamp).getTime()) / 1000) : 0;
+                      const avgSpeed = duration > 0 ? ((totalDist / 1000) / (duration / 3600)) : 0;
+                      const startLat = pts.length > 0 ? pts[0].lat : null;
+                      const startLon = pts.length > 0 ? pts[0].lon : null;
+                      const endLat = pts.length > 0 ? pts[pts.length - 1].lat : null;
+                      const endLon = pts.length > 0 ? pts[pts.length - 1].lon : null;
+                      
+                      return {
+                        session: {
+                          id: s.sessionId,
+                          name: s.sessionName || 'Untitled',
+                          createdAt: s.createdAt,
+                          startedAt: s.startedAt || s.createdAt,
+                          stoppedAt: new Date().toISOString(),
+                          mode: s.mode || '',
+                          totalPoints: pts.length,
+                          totalDistance: totalDist,
+                          totalDistanceUnit: 'meters',
+                          duration: duration,
+                          durationUnit: 'seconds',
+                          avgSpeed: parseFloat(avgSpeed.toFixed(2)),
+                          avgSpeedUnit: 'km/h',
+                          maxSpeed: parseFloat(maxSpeed.toFixed(2)),
+                          maxSpeedUnit: 'km/h',
+                          startLat: startLat,
+                          startLon: startLon,
+                          endLat: endLat,
+                          endLon: endLon,
+                          exportedAt: new Date().toISOString(),
+                        },
+                        points: pts.map((p:any)=>({lat:p.lat,lon:p.lon,timestamp:p.timestamp,speed:p.speed,heading:p.heading,mode:s.mode || p.mode || ''}))
+                      };
+                    });
                     const blob = new Blob([JSON.stringify(out, null, 2)], { type: 'application/json' });
                     const a = document.createElement('a');
                     a.href = URL.createObjectURL(blob);
@@ -464,10 +536,39 @@ export function Tracker({ isDark, onToggleTheme, onBack }: Props) {
                     </button>
                     <button
                       onClick={() => {
-                        // export this session CSV
-                        const rows = [] as any[];
-                        for (const p of s.points || []) rows.push([p.lat,p.lon,p.timestamp,p.speed,p.heading,s.mode||p.mode||'',s.sessionName||'',(p as any).accuracy||''].join(','));
-                        const blob = new Blob([[ 'lat,lon,timestamp,speed,heading,mode,sessionName,accuracy' ].concat(rows).join('\n')], { type: 'text/csv' });
+                        // export this session CSV with metadata header
+                        const pts = s.points || [];
+                        const maxSpeed = pts.length > 0 ? Math.max(...pts.map((p: any) => p.speed || 0)) : 0;
+                        const totalDist = pts.length > 1 ? pts.reduce((sum: number, p: any, i: number) => i === 0 ? 0 : sum + (haversineDistance(pts[i-1].lat, pts[i-1].lon, p.lat, p.lon) || 0), 0) : 0;
+                        const duration = s.startedAt && pts.length > 1 ? Math.round((new Date(pts[pts.length - 1].timestamp).getTime() - new Date(pts[0].timestamp).getTime()) / 1000) : 0;
+                        const avgSpeed = duration > 0 ? ((totalDist / 1000) / (duration / 3600)) : 0;
+                        const startLat = pts.length > 0 ? pts[0].lat : null;
+                        const startLon = pts.length > 0 ? pts[0].lon : null;
+                        const endLat = pts.length > 0 ? pts[pts.length - 1].lat : null;
+                        const endLon = pts.length > 0 ? pts[pts.length - 1].lon : null;
+                        
+                        const lines: string[] = [
+                          `# Session Export`,
+                          `# ID: ${s.sessionId}`,
+                          `# Name: ${s.sessionName || 'Untitled'}`,
+                          `# Started: ${s.startedAt || s.createdAt}`,
+                          `# Stopped: ${s.stoppedAt || new Date().toISOString()}`,
+                          `# Points: ${pts.length}`,
+                          `# Distance: ${totalDist.toFixed(2)} m`,
+                          `# Duration: ${duration} s`,
+                          `# Avg Speed: ${avgSpeed.toFixed(2)} km/h`,
+                          `# Max Speed: ${maxSpeed.toFixed(2)} km/h`,
+                          `# Start: ${startLat},${startLon}`,
+                          `# End: ${endLat},${endLon}`,
+                          `# Exported: ${new Date().toISOString()}`,
+                          ''
+                        ];
+                        const header = ['lat','lon','timestamp','speed','heading','mode','sessionName','accuracy'];
+                        lines.push(header.join(','));
+                        for (const p of pts) {
+                          lines.push([p.lat, p.lon, p.timestamp, p.speed, p.heading, s.mode || p.mode || '', s.sessionName || '', (p as any).accuracy ?? ''].join(','));
+                        }
+                        const blob = new Blob([lines.join('\n')], { type: 'text/csv' });
                         const a = document.createElement('a');
                         a.href = URL.createObjectURL(blob);
                         a.download = `${(s.sessionName||s.sessionId).toLowerCase().replace(/[^a-z0-9]+/g,'_')}.csv`;

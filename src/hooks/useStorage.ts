@@ -9,6 +9,7 @@ export interface StoredSession {
   mode?: string;
   createdAt: string;
   startedAt?: string;
+  stoppedAt?: string;
   points: GpsPoint[];
 }
 
@@ -88,5 +89,5 @@ export function useStorage() {
     localStorage.removeItem(STORAGE_KEY);
   }, []);
 
-  return { savePoints, loadSession, loadAll, createSession, deleteSession, renameSession, clearSessionPoints, clearAll };
+  return { savePoints, loadSession, loadAll, createSession, deleteSession, renameSession, clearSessionPoints, clearAll, writeAll };
 }
