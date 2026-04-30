@@ -5,10 +5,11 @@ import { useStorage } from './useStorage';
 
 export type RecordingStatus = 'idle' | 'recording' | 'paused' | 'stopped';
 
-const MIN_DISTANCE_METERS = 15;
 const MIN_INTERVAL_MS = 1000;
-const MAX_ACCEPTABLE_ACCURACY = 20; // meters
+const MAX_ACCEPTABLE_ACCURACY = 20; // meters - points with accuracy > this are ignored
 const MIN_SPEED_MPS = 0.5; // meters per second
+const SMALL_STEP_THRESHOLD = 0.5; // meters - ignore sub-meter jitter
+const MAX_STEP_DISTANCE = 20; // meters - ignore spikes larger than this
 
 export function useGPS() {
   const [points, setPoints] = useState<GpsPoint[]>([]);
@@ -35,7 +36,7 @@ export function useGPS() {
   const accDistRef = useRef<number>(0);
   const pointsRef = useRef<GpsPoint[]>([]);
 
-  const { savePoints, clearAll } = useStorage();
+  const { savePoints, clearAll, clearSessionPoints } = useStorage();
   // allow external session control
   const setSession = useCallback((sessionId: string) => {
     sessionIdRef.current = sessionId;
@@ -71,7 +72,6 @@ export function useGPS() {
 
       const now = Date.now();
       const timeDiff = now - lastSaveTimeRef.current;
-      const last = lastPointRef.current;
 
       // Add this raw point to smoothing buffer
       const buf = smoothingBufferRef.current;
@@ -96,17 +96,24 @@ export function useGPS() {
         heading = calculateHeading(lastAvg.lat, lastAvg.lon, avgLat, avgLon);
       }
 
+      // Ignore obvious GPS jumps/spikes
+      if (lastAvg && distFromLast > MAX_STEP_DISTANCE) return;
+
+      const computedSpeed = speed != null ? speed : lastAvg && timeDiff > 0 ? distFromLast / (timeDiff / 1000) : 0;
+
       const shouldSave =
         !lastAvg ||
-        distFromLast >= MIN_DISTANCE_METERS ||
-        (timeDiff >= MIN_INTERVAL_MS && (speed != null ? speed : distFromLast / (timeDiff / 1000)) > MIN_SPEED_MPS);
+        // save small meaningful steps (above jitter) but below jump threshold
+        (distFromLast >= SMALL_STEP_THRESHOLD && distFromLast <= MAX_STEP_DISTANCE) ||
+        // or save periodically if there's measurable speed
+        (timeDiff >= MIN_INTERVAL_MS && computedSpeed > MIN_SPEED_MPS);
 
       if (!shouldSave) return;
 
-      const mps = speed != null && speed >= 0 ? speed : lastAvg && timeDiff > 0 ? distFromLast / (timeDiff / 1000) : 0;
+      const mps = computedSpeed;
 
-      // Movement status: moving if speed > MIN_SPEED_MPS
-      const moving = mps > MIN_SPEED_MPS;
+      // Movement status: moving if speed > MIN_SPEED_MPS or if the step distance indicates movement
+      const moving = mps > MIN_SPEED_MPS || distFromLast > SMALL_STEP_THRESHOLD;
       setCurrentSpeed(moving ? mps : 0);
 
       const point: GpsPoint = {
@@ -122,8 +129,13 @@ export function useGPS() {
       lastAvgRef.current = { lat: avgLat, lon: avgLon };
       lastSaveTimeRef.current = now;
 
-      // Only accumulate distance for real movement (distance >= MIN_DISTANCE_METERS AND moving)
-      if (lastAvg && distFromLast >= MIN_DISTANCE_METERS && moving) {
+      // Accumulate distance while moving. Ignore sub-meter noise and GPS jumps.
+      if (
+        lastAvg &&
+        moving &&
+        distFromLast >= SMALL_STEP_THRESHOLD &&
+        distFromLast <= MAX_STEP_DISTANCE
+      ) {
         accDistRef.current += distFromLast;
         setTotalDistance(accDistRef.current);
       }
@@ -178,8 +190,8 @@ export function useGPS() {
       setError('Geolocation is not supported by your browser.');
       return;
     }
-    // only allow starting when accuracy is acceptable (<= 50m) unless forced
-    if (!force && currentAccuracy != null && currentAccuracy > 50) {
+    // only allow starting when accuracy is acceptable (<= MAX_ACCEPTABLE_ACCURACY) unless forced
+    if (!force && currentAccuracy != null && currentAccuracy > MAX_ACCEPTABLE_ACCURACY) {
       setError('Cannot start recording: poor GPS accuracy. Move outside or enable precise location.');
       return;
     }
@@ -246,7 +258,13 @@ export function useGPS() {
 
   const resetRecording = useCallback(() => {
     stopRecording();
-    clearAll();
+    // only clear points for the current session to avoid wiping all stored sessions
+    try {
+      clearSessionPoints(sessionIdRef.current);
+    } catch {
+      // fallback to clearing all if the storage implementation fails
+      clearAll();
+    }
     setPoints([]);
     setTotalDistance(0);
     setDuration(0);
@@ -256,7 +274,7 @@ export function useGPS() {
     lastAvgRef.current = null;
     accDistRef.current = 0;
     setStatus('idle');
-  }, [stopRecording, clearAll]);
+  }, [stopRecording, clearAll, clearSessionPoints]);
 
   const savePointsToSession = useCallback((targetSessionId: string) => {
     savePoints(pointsRef.current, targetSessionId, mode, startedAtRef.current);
